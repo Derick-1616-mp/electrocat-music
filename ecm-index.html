@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d1224">
-<title>ElectroCat Music</title>
+<title>ElectroMusic</title>
 <style>
 :root{--bg:#0d1224;--card:#161e3a;--ink:#eef2ff;--mut:#98a2c8;--ac:#3aa0ff;--line:#27315c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px)}
 *{box-sizing:border-box}
@@ -86,7 +86,7 @@ function nextSong(auto){if(!QUEUE.length)return;if(REP==2&&auto){AUD.currentTime
   start()}
 function prev(){if(!QUEUE.length)return;if(AUD.currentTime>3){AUD.currentTime=0;return}qi=qi>0?qi-1:QUEUE.length-1;start()}
 function toggle(){if(!CUR)return;if(AUD.paused)AUD.play();else AUD.pause()}
-function media(){if("mediaSession"in navigator){try{navigator.mediaSession.metadata=new MediaMetadata({title:CUR.name,artist:CUR.artist||"ElectroCat Music"});const h=(a,f)=>navigator.mediaSession.setActionHandler(a,f);h("play",toggle);h("pause",toggle);h("nexttrack",()=>nextSong(false));h("previoustrack",prev)}catch(e){}}}
+function media(){if("mediaSession"in navigator){try{navigator.mediaSession.metadata=new MediaMetadata({title:CUR.name,artist:CUR.artist||"ElectroMusic"});const h=(a,f)=>navigator.mediaSession.setActionHandler(a,f);h("play",toggle);h("pause",toggle);h("nexttrack",()=>nextSong(false));h("previoustrack",prev)}catch(e){}}}
 function tick(){const k=$("pk");if(k&&!SEEK){k.max=AUD.duration||0;k.value=AUD.currentTime}const t=$("pt");if(t)t.textContent=fmt(AUD.currentTime);const d=$("pd");if(d)d.textContent=fmt(AUD.duration)}
 AUD.addEventListener("play",()=>{lk(true);upd()});AUD.addEventListener("pause",()=>{lk(false);upd()});
 AUD.addEventListener("ended",()=>nextSong(true));AUD.addEventListener("timeupdate",tick);AUD.addEventListener("loadedmetadata",tick);
@@ -134,7 +134,7 @@ function songRow(x,play,plus,rm){return`<div class="sg${CUR&&CUR.id==x.id?" cur"
 function songList(){const l=filt();if(!l.length)return`<p class="mut pad">${SONGS.length?"No match.":"No music found on this phone."}</p>`;return l.slice(0,400).map(x=>songRow(x,`playFrom('${x.id}')`,true)).join("")+(l.length>400?'<p class="mut pad">Showing the first 400. Search to find the rest.</p>':"")}
 function vSongs(){
   if(ST=="scanning")return'<p class="mut pad">Looking for music on your phone…</p>';
-  if(ST=="denied")return`<div class="card"><p>Music access is off. Allow it so the app can find the songs on your phone.</p><button onclick="scan()">Allow music access</button><p class="mut" style="margin:10px 0 0">If nothing happens, open Android Settings → Apps → ElectroCat Music → Permissions → Music and audio.</p></div>`;
+  if(ST=="denied")return`<div class="card"><p>Music access is off. Allow it so the app can find the songs on your phone.</p><button onclick="scan()">Allow music access</button><p class="mut" style="margin:10px 0 0">If nothing happens, open Android Settings → Apps → ElectroMusic → Permissions → Music and audio.</p></div>`;
   if(ST=="web")return`<div class="card"><p>This is the browser preview. On an Android phone the app finds your music by itself. Here you can pick files to try the player.</p><input id="wf" type="file" accept="audio/*" multiple style="display:none" onchange="webFiles(this.files)"><button onclick="$('wf').click()">Pick music files</button></div>`;
   return`<input id="q" placeholder="Search songs" value="${esc(Q)}" oninput="Q=this.value;$('sl').innerHTML=songList()"><div id="sl">${songList()}</div>`}
 function vPls(){
@@ -144,7 +144,7 @@ function vPls(){
 function setTab(t){if(OPL){OPL=null;pop("pl",true)}TAB=t;render()}
 function render(){
   const y=scrollY;
-  $("app").innerHTML=`<div class="hd"><div class="g"><h1>ElectroCat Music</h1><div class="mut">${ST=="ok"?SONGS.length+" songs":""}</div></div>${NATIVE?'<button class="ic" onclick="scan()" aria-label="Refresh music list">⟳</button>':""}</div><div class="tabs"><button class="${TAB=="songs"?"on":""}" onclick="setTab(\'songs\')">Songs</button><button class="${TAB=="pls"?"on":""}" onclick="setTab(\'pls\')">Playlists</button></div>${TAB=="songs"?vSongs():vPls()}`;
+  $("app").innerHTML=`<div class="hd"><div class="g"><h1>ElectroMusic</h1><div class="mut">${ST=="ok"?SONGS.length+" songs":""}</div></div>${NATIVE?'<button class="ic" onclick="scan()" aria-label="Refresh music list">⟳</button>':""}</div><div class="tabs"><button class="${TAB=="songs"?"on":""}" onclick="setTab(\'songs\')">Songs</button><button class="${TAB=="pls"?"on":""}" onclick="setTab(\'pls\')">Playlists</button></div>${TAB=="songs"?vSongs():vPls()}`;
   scrollTo(0,y);upd()}
 try{history.replaceState({n:"root"},"")}catch(e){}
 render();if(NATIVE)scan();
