@@ -32,7 +32,7 @@ jobs:
         run: |
           npm init -y
           npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
-          npx cap init "ElectroCat Music" com.electrocat.music --web-dir www
+          npx cap init "ElectroMusic" com.electromusic --web-dir www
           npx cap add android
 
       - name: Add the music engine
