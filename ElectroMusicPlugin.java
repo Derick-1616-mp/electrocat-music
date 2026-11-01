@@ -4,6 +4,9 @@ import android.Manifest;
 import android.content.Context;
 import android.database.Cursor;
 import android.os.Build;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
 import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.webkit.WebView;
@@ -109,6 +112,176 @@ public class ElectroMusicPlugin extends Plugin {
             // ignore
         }
         call.resolve();
+    }
+
+    private MediaPlayer mp;
+    private AudioManager audioManager;
+    private final AudioManager.OnAudioFocusChangeListener focusListener = new AudioManager.OnAudioFocusChangeListener() {
+        @Override
+        public void onAudioFocusChange(int change) {
+            if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                try {
+                    if (mp != null && mp.isPlaying()) {
+                        mp.pause();
+                        notifyListeners("paused", new JSObject());
+                    }
+                } catch (Exception e) {
+                    // ignore
+                }
+            }
+        }
+    };
+
+    private void releasePlayer() {
+        try {
+            if (mp != null) mp.release();
+        } catch (Exception e) {
+            // ignore
+        }
+        mp = null;
+        try {
+            if (audioManager != null) audioManager.abandonAudioFocus(focusListener);
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        releasePlayer();
+        super.handleOnDestroy();
+    }
+
+    @PluginMethod
+    public void load(final PluginCall call) {
+        final String idText = call.getString("id");
+        if (idText == null) {
+            call.reject("no id");
+            return;
+        }
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                final boolean[] done = { false };
+                try {
+                    long id = Long.parseLong(idText);
+                    android.net.Uri uri = android.content.ContentUris.withAppendedId(
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
+                    releasePlayer();
+                    audioManager = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+                    audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+                    mp = new MediaPlayer();
+                    mp.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build());
+                    mp.setWakeMode(getContext(), PowerManager.PARTIAL_WAKE_LOCK);
+                    mp.setDataSource(getContext(), uri);
+                    mp.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+                        @Override
+                        public void onPrepared(MediaPlayer m) {
+                            m.start();
+                            JSObject r = new JSObject();
+                            r.put("duration", m.getDuration());
+                            if (!done[0]) {
+                                done[0] = true;
+                                call.resolve(r);
+                            }
+                        }
+                    });
+                    mp.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+                        @Override
+                        public void onCompletion(MediaPlayer m) {
+                            notifyListeners("ended", new JSObject());
+                        }
+                    });
+                    mp.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                        @Override
+                        public boolean onError(MediaPlayer m, int what, int extra) {
+                            if (!done[0]) {
+                                done[0] = true;
+                                call.reject("play error " + what);
+                            } else {
+                                notifyListeners("error", new JSObject());
+                            }
+                            return true;
+                        }
+                    });
+                    mp.prepareAsync();
+                } catch (Exception e) {
+                    if (!done[0]) {
+                        done[0] = true;
+                        call.reject(e.getMessage() == null ? "load failed" : e.getMessage());
+                    }
+                }
+            }
+        });
+    }
+
+    @PluginMethod
+    public void resume(final PluginCall call) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (mp != null && !mp.isPlaying()) mp.start();
+                } catch (Exception e) {
+                    // ignore
+                }
+                call.resolve();
+            }
+        });
+    }
+
+    @PluginMethod
+    public void pause(final PluginCall call) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (mp != null && mp.isPlaying()) mp.pause();
+                } catch (Exception e) {
+                    // ignore
+                }
+                call.resolve();
+            }
+        });
+    }
+
+    @PluginMethod
+    public void seek(final PluginCall call) {
+        final Integer ms = call.getInt("ms");
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (mp != null && ms != null) mp.seekTo(ms);
+                } catch (Exception e) {
+                    // ignore
+                }
+                call.resolve();
+            }
+        });
+    }
+
+    @PluginMethod
+    public void status(final PluginCall call) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                JSObject r = new JSObject();
+                try {
+                    if (mp != null) {
+                        r.put("position", mp.getCurrentPosition());
+                        r.put("duration", mp.getDuration());
+                        r.put("playing", mp.isPlaying());
+                    }
+                } catch (Exception e) {
+                    // ignore
+                }
+                call.resolve(r);
+            }
+        });
     }
 
     private void doScan(PluginCall call) {

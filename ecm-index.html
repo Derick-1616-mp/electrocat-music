@@ -55,7 +55,7 @@ const by=(a,b)=>a.name.localeCompare(b.name);
 let P=(()=>{try{const d=JSON.parse(localStorage.getItem("ecm.v1"));if(d&&d.pls)return d}catch(e){}return{pls:[]}})();
 const save=()=>{try{localStorage.setItem("ecm.v1",JSON.stringify(P))}catch(e){}};
 let SONGS=[],ST=NATIVE?"scanning":"web",TAB="songs",OPL=null,Q="",LAST=0,PSEL=[],PID=null,CFN=null;
-const AUD=new Audio();let QUEUE=[],qi=-1,CUR=null,SHUF=false,REP=0,SEEK=0;
+const AUD=NATIVE?nativeAudio():new Audio();let QUEUE=[],qi=-1,CUR=null,SHUF=false,REP=0,SEEK=0;
 function toast(t){const e=document.createElement("div");e.className="toast";e.textContent=t;document.body.appendChild(e);setTimeout(()=>e.remove(),2200)}
 
 /* ---- back button: overlays close first ---- */
@@ -75,8 +75,32 @@ function webFiles(list){const a=[...list].filter(f=>(f.type||"").startsWith("aud
 document.addEventListener("visibilitychange",()=>{if(NATIVE&&!document.hidden&&ST=="ok"&&Date.now()-LAST>60000)scan(true)});
 
 /* ---- playback ---- */
+function nativeAudio(){
+  const L={};let poll=null;
+  const o={paused:true,duration:0,_t:0,_p:"",_ok:false,
+    addEventListener(n,f){(L[n]=L[n]||[]).push(f)},
+    emit(n){(L[n]||[]).slice().forEach(f=>f())},
+    get src(){return this._p},
+    set src(v){this._p=v;this._ok=false;this.duration=0;this._t=0},
+    get currentTime(){return this._t},
+    set currentTime(v){this._t=+v;const p=plug();if(p&&this._ok)p.seek({ms:Math.round(v*1000)}).catch(()=>{})},
+    startPoll(){this.stopPoll();poll=setInterval(()=>{const p=plug();if(!p||o.paused)return;p.status().then(s=>{o._t=(s.position||0)/1000;if(s.duration>0)o.duration=s.duration/1000;o.emit("timeupdate")}).catch(()=>{})},500)},
+    stopPoll(){if(poll){clearInterval(poll);poll=null}},
+    play(){const p=plug();if(!p)return Promise.resolve();
+      if(this._ok){p.resume().catch(()=>{});this.paused=false;this.emit("play");this.startPoll();return Promise.resolve()}
+      this.paused=false;this.emit("play");
+      p.load({id:this._p}).then(r=>{o._ok=true;o.duration=((r&&r.duration)||0)/1000;o.emit("loadedmetadata");o.startPoll()}).catch(()=>{o.paused=true;o.stopPoll();o.emit("pause");o.emit("error")});
+      return Promise.resolve()},
+    pause(){const p=plug();if(p)p.pause().catch(()=>{});this.paused=true;this.stopPoll();this.emit("pause")}
+  };
+  const p=plug();
+  if(p&&p.addListener){
+    p.addListener("ended",()=>{o.paused=true;o.stopPoll();o.emit("ended")});
+    p.addListener("paused",()=>{o.paused=true;o.stopPoll();o.emit("pause")});
+    p.addListener("error",()=>{o.paused=true;o.stopPoll();o.emit("pause");o.emit("error")})}
+  return o}
 const songById=id=>SONGS.find(x=>x.id==id)||null;
-const srcOf=x=>x.url||Capacitor.convertFileSrc(x.path);
+const srcOf=x=>x.url||(NATIVE?String(x.id).slice(1):Capacitor.convertFileSrc(x.path));
 function lk(on){const p=NATIVE&&plug();if(p){try{(on?p.lock():p.unlock()).catch(()=>{})}catch(e){}}}
 function playId(id,list){QUEUE=list&&list.length?list.slice():[id];qi=QUEUE.indexOf(id);if(qi<0){QUEUE=[id];qi=0}start()}
 function start(){CUR=songById(QUEUE[qi]);if(!CUR)return;AUD.src=srcOf(CUR);const pr=AUD.play();if(pr&&pr.catch)pr.catch(()=>toast("Can’t play this file"));media();upd()}
