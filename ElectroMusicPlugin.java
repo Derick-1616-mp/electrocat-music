@@ -1,16 +1,17 @@
 package com.electrocat.music;
 
 import android.Manifest;
+import android.content.ClipData;
+import android.content.ContentUris;
 import android.content.Context;
+import android.content.Intent;
 import android.database.Cursor;
-import android.os.Build;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
+import android.os.Build;
 import android.os.PowerManager;
 import android.provider.MediaStore;
-import android.webkit.WebView;
-import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
 
@@ -35,10 +36,47 @@ public class ElectroMusicPlugin extends Plugin {
 
     private PowerManager.WakeLock wakeLock;
     private boolean guarded = false;
-    private long lastBack = 0;
+    private MediaPlayer mp;
+    private AudioManager audioManager;
+
+    private final AudioManager.OnAudioFocusChangeListener focusListener = new AudioManager.OnAudioFocusChangeListener() {
+        @Override
+        public void onAudioFocusChange(int change) {
+            if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                try {
+                    if (mp != null && mp.isPlaying()) {
+                        mp.pause();
+                        notifyListeners("paused", new JSObject());
+                    }
+                } catch (Exception e) {
+                    // ignore
+                }
+            }
+        }
+    };
 
     private String permAlias() {
         return Build.VERSION.SDK_INT >= 33 ? "audio" : "storage";
+    }
+
+    private void releasePlayer() {
+        try {
+            if (mp != null) mp.release();
+        } catch (Exception e) {
+            // ignore
+        }
+        mp = null;
+        try {
+            if (audioManager != null) audioManager.abandonAudioFocus(focusListener);
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        releasePlayer();
+        super.handleOnDestroy();
     }
 
     @PluginMethod
@@ -59,6 +97,7 @@ public class ElectroMusicPlugin extends Plugin {
         }
     }
 
+    // The Android Back button is sent to the web page, which decides what to do.
     @PluginMethod
     public void backGuard(final PluginCall call) {
         getActivity().runOnUiThread(new Runnable() {
@@ -69,24 +108,24 @@ public class ElectroMusicPlugin extends Plugin {
                     getActivity().getOnBackPressedDispatcher().addCallback(getActivity(), new OnBackPressedCallback(true) {
                         @Override
                         public void handleOnBackPressed() {
-                            WebView wv = getBridge().getWebView();
-                            if (wv != null && wv.canGoBack()) {
-                                wv.goBack();
-                                return;
-                            }
-                            long now = System.currentTimeMillis();
-                            if (now - lastBack < 2000) {
-                                getActivity().finish();
-                            } else {
-                                lastBack = now;
-                                Toast.makeText(getContext(), "Press back again to exit", Toast.LENGTH_SHORT).show();
-                            }
+                            notifyListeners("back", new JSObject());
                         }
                     });
                 }
                 call.resolve();
             }
         });
+    }
+
+    @PluginMethod
+    public void exit(final PluginCall call) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                getActivity().finish();
+            }
+        });
+        call.resolve();
     }
 
     @PluginMethod
@@ -114,44 +153,6 @@ public class ElectroMusicPlugin extends Plugin {
         call.resolve();
     }
 
-    private MediaPlayer mp;
-    private AudioManager audioManager;
-    private final AudioManager.OnAudioFocusChangeListener focusListener = new AudioManager.OnAudioFocusChangeListener() {
-        @Override
-        public void onAudioFocusChange(int change) {
-            if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                try {
-                    if (mp != null && mp.isPlaying()) {
-                        mp.pause();
-                        notifyListeners("paused", new JSObject());
-                    }
-                } catch (Exception e) {
-                    // ignore
-                }
-            }
-        }
-    };
-
-    private void releasePlayer() {
-        try {
-            if (mp != null) mp.release();
-        } catch (Exception e) {
-            // ignore
-        }
-        mp = null;
-        try {
-            if (audioManager != null) audioManager.abandonAudioFocus(focusListener);
-        } catch (Exception e) {
-            // ignore
-        }
-    }
-
-    @Override
-    protected void handleOnDestroy() {
-        releasePlayer();
-        super.handleOnDestroy();
-    }
-
     @PluginMethod
     public void load(final PluginCall call) {
         final String idText = call.getString("id");
@@ -165,7 +166,7 @@ public class ElectroMusicPlugin extends Plugin {
                 final boolean[] done = { false };
                 try {
                     long id = Long.parseLong(idText);
-                    android.net.Uri uri = android.content.ContentUris.withAppendedId(
+                    android.net.Uri uri = ContentUris.withAppendedId(
                         MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
                     releasePlayer();
                     audioManager = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
@@ -284,6 +285,36 @@ public class ElectroMusicPlugin extends Plugin {
         });
     }
 
+    @PluginMethod
+    public void share(final PluginCall call) {
+        final String idText = call.getString("id");
+        if (idText == null) {
+            call.reject("no id");
+            return;
+        }
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    long id = Long.parseLong(idText);
+                    android.net.Uri uri = ContentUris.withAppendedId(
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType("audio/*");
+                    send.putExtra(Intent.EXTRA_STREAM, uri);
+                    send.setClipData(ClipData.newRawUri("", uri));
+                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    Intent chooser = Intent.createChooser(send, "Share song");
+                    chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    getActivity().startActivity(chooser);
+                    call.resolve();
+                } catch (Exception e) {
+                    call.reject(e.getMessage() == null ? "share failed" : e.getMessage());
+                }
+            }
+        });
+    }
+
     private void doScan(PluginCall call) {
         Cursor c = null;
         try {
@@ -294,7 +325,9 @@ public class ElectroMusicPlugin extends Plugin {
                 MediaStore.Audio.Media.DURATION,
                 MediaStore.Audio.Media.SIZE,
                 MediaStore.Audio.Media.DATA,
-                MediaStore.Audio.Media.DISPLAY_NAME
+                MediaStore.Audio.Media.DISPLAY_NAME,
+                MediaStore.Audio.Media.ALBUM,
+                MediaStore.Audio.Media.DATE_ADDED
             };
             String sel = MediaStore.Audio.Media.IS_RINGTONE + " = 0 AND "
                 + MediaStore.Audio.Media.IS_NOTIFICATION + " = 0 AND "
@@ -306,18 +339,21 @@ public class ElectroMusicPlugin extends Plugin {
             JSArray songs = new JSArray();
             if (c != null) {
                 while (c.moveToNext()) {
-                    String path = c.getString(5);
-                    if (path == null) continue;
                     String artist = c.getString(2);
                     if (artist != null && artist.equals("<unknown>")) artist = "";
+                    String album = c.getString(7);
+                    if (album != null && album.equals("<unknown>")) album = "";
+                    String path = c.getString(5);
                     JSObject o = new JSObject();
                     o.put("id", c.getLong(0));
                     o.put("title", c.getString(1));
                     o.put("artist", artist == null ? "" : artist);
                     o.put("duration", c.getLong(3));
                     o.put("size", c.getLong(4));
-                    o.put("path", path);
+                    o.put("path", path == null ? "" : path);
                     o.put("name", c.getString(6));
+                    o.put("album", album == null ? "" : album);
+                    o.put("added", c.getLong(8));
                     songs.put(o);
                 }
             }
