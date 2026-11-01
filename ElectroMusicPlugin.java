@@ -3,17 +3,15 @@ package com.electrocat.music;
 import android.Manifest;
 import android.content.ClipData;
 import android.content.ContentUris;
-import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
-import android.media.AudioAttributes;
-import android.media.AudioManager;
-import android.media.MediaPlayer;
 import android.os.Build;
-import android.os.PowerManager;
 import android.provider.MediaStore;
 
 import androidx.activity.OnBackPressedCallback;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -34,50 +32,37 @@ import com.getcapacitor.annotation.PermissionCallback;
 )
 public class ElectroMusicPlugin extends Plugin {
 
-    private PowerManager.WakeLock wakeLock;
+    private static ElectroMusicPlugin inst;
     private boolean guarded = false;
-    private MediaPlayer mp;
-    private AudioManager audioManager;
 
-    private final AudioManager.OnAudioFocusChangeListener focusListener = new AudioManager.OnAudioFocusChangeListener() {
-        @Override
-        public void onAudioFocusChange(int change) {
-            if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                try {
-                    if (mp != null && mp.isPlaying()) {
-                        mp.pause();
-                        notifyListeners("paused", new JSObject());
-                    }
-                } catch (Exception e) {
-                    // ignore
-                }
+    @Override
+    public void load() {
+        inst = this;
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (inst == this) inst = null;
+        super.handleOnDestroy();
+    }
+
+    // Called by the playback service to tell the web page what is happening.
+    public static void emit(String name, JSObject data) {
+        ElectroMusicPlugin p = inst;
+        if (p != null) {
+            try {
+                p.notifyListeners(name, data);
+            } catch (Exception e) {
+                // ignore
             }
         }
-    };
+    }
 
     private String permAlias() {
         return Build.VERSION.SDK_INT >= 33 ? "audio" : "storage";
     }
 
-    private void releasePlayer() {
-        try {
-            if (mp != null) mp.release();
-        } catch (Exception e) {
-            // ignore
-        }
-        mp = null;
-        try {
-            if (audioManager != null) audioManager.abandonAudioFocus(focusListener);
-        } catch (Exception e) {
-            // ignore
-        }
-    }
-
-    @Override
-    protected void handleOnDestroy() {
-        releasePlayer();
-        super.handleOnDestroy();
-    }
+    // ---------- finding music ----------
 
     @PluginMethod
     public void scan(PluginCall call) {
@@ -97,7 +82,8 @@ public class ElectroMusicPlugin extends Plugin {
         }
     }
 
-    // The Android Back button is sent to the web page, which decides what to do.
+    // ---------- back button and exit ----------
+
     @PluginMethod
     public void backGuard(final PluginCall call) {
         getActivity().runOnUiThread(new Runnable() {
@@ -128,93 +114,90 @@ public class ElectroMusicPlugin extends Plugin {
         call.resolve();
     }
 
+    // ---------- playing ----------
+
     @PluginMethod
     public void lock(PluginCall call) {
-        try {
-            if (wakeLock == null) {
-                PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
-                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "electrocat:music");
-                wakeLock.setReferenceCounted(false);
-            }
-            if (!wakeLock.isHeld()) wakeLock.acquire(6 * 60 * 60 * 1000L);
-        } catch (Exception e) {
-            // keep playing even if the lock could not be taken
-        }
         call.resolve();
     }
 
     @PluginMethod
     public void unlock(PluginCall call) {
-        try {
-            if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-        } catch (Exception e) {
-            // ignore
-        }
         call.resolve();
     }
 
     @PluginMethod
-    public void load(final PluginCall call) {
-        final String idText = call.getString("id");
-        if (idText == null) {
-            call.reject("no id");
+    public void playQueue(final PluginCall call) {
+        try {
+            JSArray ids = call.getArray("ids");
+            JSArray titles = call.getArray("titles");
+            JSArray artists = call.getArray("artists");
+            int n = ids.length();
+            long[] qi = new long[n];
+            String[] qt = new String[n];
+            String[] qa = new String[n];
+            for (int i = 0; i < n; i++) {
+                qi[i] = ids.getLong(i);
+                qt[i] = titles.isNull(i) ? "" : titles.getString(i);
+                qa[i] = artists.isNull(i) ? "" : artists.getString(i);
+            }
+            PlaybackService.qIds = qi;
+            PlaybackService.qTitles = qt;
+            PlaybackService.qArtists = qa;
+            Integer index = call.getInt("index");
+            PlaybackService.qIndex = index == null ? 0 : index;
+            Boolean shuffle = call.getBoolean("shuffle");
+            PlaybackService.qShuffle = shuffle != null && shuffle;
+            Integer repeat = call.getInt("repeat");
+            PlaybackService.qRepeat = repeat == null ? 0 : repeat;
+        } catch (Exception e) {
+            call.reject("bad queue");
             return;
         }
         getActivity().runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                final boolean[] done = { false };
                 try {
-                    long id = Long.parseLong(idText);
-                    android.net.Uri uri = ContentUris.withAppendedId(
-                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
-                    releasePlayer();
-                    audioManager = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
-                    audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-                    mp = new MediaPlayer();
-                    mp.setAudioAttributes(new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build());
-                    mp.setWakeMode(getContext(), PowerManager.PARTIAL_WAKE_LOCK);
-                    mp.setDataSource(getContext(), uri);
-                    mp.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
-                        @Override
-                        public void onPrepared(MediaPlayer m) {
-                            m.start();
-                            JSObject r = new JSObject();
-                            r.put("duration", m.getDuration());
-                            if (!done[0]) {
-                                done[0] = true;
-                                call.resolve(r);
-                            }
-                        }
-                    });
-                    mp.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
-                        @Override
-                        public void onCompletion(MediaPlayer m) {
-                            notifyListeners("ended", new JSObject());
-                        }
-                    });
-                    mp.setOnErrorListener(new MediaPlayer.OnErrorListener() {
-                        @Override
-                        public boolean onError(MediaPlayer m, int what, int extra) {
-                            if (!done[0]) {
-                                done[0] = true;
-                                call.reject("play error " + what);
-                            } else {
-                                notifyListeners("error", new JSObject());
-                            }
-                            return true;
-                        }
-                    });
-                    mp.prepareAsync();
-                } catch (Exception e) {
-                    if (!done[0]) {
-                        done[0] = true;
-                        call.reject(e.getMessage() == null ? "load failed" : e.getMessage());
+                    if (Build.VERSION.SDK_INT >= 33
+                        && ContextCompat.checkSelfPermission(getContext(), "android.permission.POST_NOTIFICATIONS")
+                            != PackageManager.PERMISSION_GRANTED) {
+                        ActivityCompat.requestPermissions(getActivity(),
+                            new String[] { "android.permission.POST_NOTIFICATIONS" }, 4242);
                     }
+                    Intent si = new Intent(getContext(), PlaybackService.class).setAction(PlaybackService.A_PLAY);
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        getContext().startForegroundService(si);
+                    } else {
+                        getContext().startService(si);
+                    }
+                    call.resolve();
+                } catch (Exception e) {
+                    call.reject(e.getMessage() == null ? "could not start" : e.getMessage());
                 }
+            }
+        });
+    }
+
+    @PluginMethod
+    public void nextTrack(final PluginCall call) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                PlaybackService s = PlaybackService.instance;
+                if (s != null) s.next(false);
+                call.resolve();
+            }
+        });
+    }
+
+    @PluginMethod
+    public void prevTrack(final PluginCall call) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                PlaybackService s = PlaybackService.instance;
+                if (s != null) s.previous();
+                call.resolve();
             }
         });
     }
@@ -224,11 +207,8 @@ public class ElectroMusicPlugin extends Plugin {
         getActivity().runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                try {
-                    if (mp != null && !mp.isPlaying()) mp.start();
-                } catch (Exception e) {
-                    // ignore
-                }
+                PlaybackService s = PlaybackService.instance;
+                if (s != null) s.resumePlayback();
                 call.resolve();
             }
         });
@@ -239,11 +219,8 @@ public class ElectroMusicPlugin extends Plugin {
         getActivity().runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                try {
-                    if (mp != null && mp.isPlaying()) mp.pause();
-                } catch (Exception e) {
-                    // ignore
-                }
+                PlaybackService s = PlaybackService.instance;
+                if (s != null) s.pausePlayback();
                 call.resolve();
             }
         });
@@ -255,14 +232,20 @@ public class ElectroMusicPlugin extends Plugin {
         getActivity().runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                try {
-                    if (mp != null && ms != null) mp.seekTo(ms);
-                } catch (Exception e) {
-                    // ignore
-                }
+                PlaybackService s = PlaybackService.instance;
+                if (s != null && ms != null) s.seekTo(ms);
                 call.resolve();
             }
         });
+    }
+
+    @PluginMethod
+    public void setModes(PluginCall call) {
+        Boolean shuffle = call.getBoolean("shuffle");
+        Integer repeat = call.getInt("repeat");
+        PlaybackService.qShuffle = shuffle != null && shuffle;
+        PlaybackService.qRepeat = repeat == null ? 0 : repeat;
+        call.resolve();
     }
 
     @PluginMethod
@@ -271,19 +254,45 @@ public class ElectroMusicPlugin extends Plugin {
             @Override
             public void run() {
                 JSObject r = new JSObject();
-                try {
-                    if (mp != null) {
-                        r.put("position", mp.getCurrentPosition());
-                        r.put("duration", mp.getDuration());
-                        r.put("playing", mp.isPlaying());
-                    }
-                } catch (Exception e) {
-                    // ignore
+                PlaybackService s = PlaybackService.instance;
+                if (s != null) {
+                    r.put("position", s.position());
+                    r.put("duration", s.duration());
+                    r.put("playing", s.isPlayingNow());
+                    r.put("index", PlaybackService.qIndex);
                 }
                 call.resolve(r);
             }
         });
     }
+
+    @PluginMethod
+    public void getState(final PluginCall call) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                JSObject r = new JSObject();
+                PlaybackService s = PlaybackService.instance;
+                if (s == null || PlaybackService.qIds.length == 0) {
+                    r.put("active", false);
+                } else {
+                    JSArray ids = new JSArray();
+                    for (long id : PlaybackService.qIds) ids.put(id);
+                    r.put("active", true);
+                    r.put("ids", ids);
+                    r.put("index", PlaybackService.qIndex);
+                    r.put("playing", s.isPlayingNow());
+                    r.put("shuffle", PlaybackService.qShuffle);
+                    r.put("repeat", PlaybackService.qRepeat);
+                    r.put("position", s.position());
+                    r.put("duration", s.duration());
+                }
+                call.resolve(r);
+            }
+        });
+    }
+
+    // ---------- sharing ----------
 
     @PluginMethod
     public void share(final PluginCall call) {

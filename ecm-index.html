@@ -40,7 +40,8 @@ input[type=range]{padding:0;border:0;background:none;margin:10px 0 2px;accent-co
 #mp{display:none;position:fixed;left:0;right:0;bottom:0;z-index:20;background:#121a35;border-top:1px solid var(--line);align-items:center;gap:4px;padding:6px 10px calc(6px + env(safe-area-inset-bottom,0px))}
 #mp img{width:42px;height:42px;border-radius:50%;flex:none}
 #ns{display:none;position:fixed;inset:0;z-index:30;background:linear-gradient(#17316b,#0d1224 70%);padding:calc(10px + env(safe-area-inset-top,0px)) 20px calc(20px + env(safe-area-inset-bottom,0px));overflow:auto}
-.nsi{display:flex;flex-direction:column;gap:6px;width:100%;max-width:480px;margin:0 auto}
+.nsi{display:flex;flex-direction:column;gap:6px;width:100%;max-width:480px;margin:0 auto;min-height:calc(100vh - 40px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px))}
+.cp{margin-top:auto;padding-top:22px;text-align:center;color:var(--mut);font-size:.75rem}
 .cover{align-self:center;width:min(78vw,300px);aspect-ratio:1;border-radius:50%;object-fit:cover;margin:14px 0;box-shadow:0 12px 40px rgba(0,0,0,.55);background:#e9ecf3}
 .big2{font-size:1.3rem;white-space:normal}
 #md{display:none;position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px}
@@ -90,7 +91,7 @@ let P=(()=>{try{const d=JSON.parse(localStorage.getItem("ecm.v1"));if(d&&d.pls){
 const save=()=>{try{localStorage.setItem("ecm.v1",JSON.stringify(P))}catch(e){}};
 const dn=x=>P.names[x.id]||x.name;
 let SONGS=[],ST=NATIVE?"scanning":"web",TAB="songs",OPL=null,Q="",LAST=0,PSEL=[],PID=null,CFN=null,PICK=[],SELM=false,SEL=[],EXITARM=false;
-const AUD=NATIVE?nativeAudio():new Audio();let QUEUE=[],qi=-1,CUR=null,SHUF=false,REP=0,SEEK=0;
+const AUD=NATIVE?nativeAudio():new Audio();let QUEUE=[],qi=-1,CUR=null,SHUF=!!P.shuf,REP=P.rep||0,SEEK=0;
 function toast(t){const e=document.createElement("div");e.className="toast";e.textContent=t;document.body.appendChild(e);setTimeout(()=>e.remove(),2200)}
 
 /* ---- Android back button (sent from the app) ---- */
@@ -108,45 +109,49 @@ function plug(){return window.Capacitor&&((Capacitor.Plugins&&Capacitor.Plugins.
 function scan(){
   if(!NATIVE)return;const p=plug();if(!p){ST="denied";render();return}
   ST="scanning";render();
-  p.scan().then(r=>{SONGS=((r&&r.songs)||[]).map(x=>({id:"n"+x.id,name:String(x.title||x.name||"Unknown").trim(),artist:x.artist||"",album:x.album||"",added:x.added||0,size:x.size||0,dur:Math.round((x.duration||0)/1000),path:x.path||""}));ST="ok";LAST=Date.now();render()}).catch(()=>{ST="denied";render()})}
+  p.scan().then(r=>{SONGS=((r&&r.songs)||[]).map(x=>({id:"n"+x.id,name:String(x.title||x.name||"Unknown").trim(),artist:x.artist||"",album:x.album||"",added:x.added||0,size:x.size||0,dur:Math.round((x.duration||0)/1000),path:x.path||""}));ST="ok";LAST=Date.now();render();restore()}).catch(()=>{ST="denied";render()})}
 function webFiles(list){const a=[...list].filter(f=>(f.type||"").startsWith("audio")||/\.(mp3|m4a|aac|wav|ogg|opus|flac)$/i.test(f.name));SONGS=a.map((f,i)=>({id:"w"+i+"_"+f.size,name:f.name.replace(/\.[^.]+$/,""),artist:"",album:"",added:Math.round(f.lastModified/1000),size:f.size,dur:0,path:f.name,url:URL.createObjectURL(f)}));ST="ok";render()}
 document.addEventListener("visibilitychange",()=>{if(NATIVE&&!document.hidden&&ST=="ok"&&Date.now()-LAST>60000){const p=plug();p&&p.scan().then(r=>{if(r&&r.songs&&r.songs.length!=SONGS.length)scan()}).catch(()=>{})}});
 
 /* ---- playback ---- */
 function nativeAudio(){
   const L={};let poll=null;
-  const o={paused:true,duration:0,_t:0,_p:"",_ok:false,
+  const o={paused:true,duration:0,_t:0,
     addEventListener(n,f){(L[n]=L[n]||[]).push(f)},
     emit(n){(L[n]||[]).slice().forEach(f=>f())},
-    get src(){return this._p},
-    set src(v){this._p=v;this._ok=false;this.duration=0;this._t=0},
     get currentTime(){return this._t},
-    set currentTime(v){this._t=+v;const p=plug();if(p&&this._ok)p.seek({ms:Math.round(v*1000)}).catch(()=>{})},
+    set currentTime(v){this._t=+v;const p=plug();if(p)p.seek({ms:Math.round(v*1000)}).catch(()=>{})},
+    setPlaying(b){this.paused=!b;if(b)this.startPoll();else this.stopPoll()},
     startPoll(){this.stopPoll();poll=setInterval(()=>{const p=plug();if(!p||o.paused)return;p.status().then(s=>{o._t=(s.position||0)/1000;if(s.duration>0)o.duration=s.duration/1000;o.emit("timeupdate")}).catch(()=>{})},500)},
     stopPoll(){if(poll){clearInterval(poll);poll=null}},
-    play(){const p=plug();if(!p)return Promise.resolve();
-      if(this._ok){p.resume().catch(()=>{});this.paused=false;this.emit("play");this.startPoll();return Promise.resolve()}
-      this.paused=false;this.emit("play");
-      p.load({id:this._p}).then(r=>{o._ok=true;o.duration=((r&&r.duration)||0)/1000;o.emit("loadedmetadata");o.startPoll()}).catch(()=>{o.paused=true;o.stopPoll();o.emit("pause");o.emit("error")});
-      return Promise.resolve()},
-    pause(){const p=plug();if(p)p.pause().catch(()=>{});this.paused=true;this.stopPoll();this.emit("pause")}
+    play(){const p=plug();if(p)p.resume().catch(()=>{});this.setPlaying(true);this.emit("play");return Promise.resolve()},
+    pause(){const p=plug();if(p)p.pause().catch(()=>{});this.setPlaying(false);this.emit("pause")}
   };
   const p=plug();
   if(p&&p.addListener){
-    p.addListener("ended",()=>{o.paused=true;o.stopPoll();o.emit("ended")});
-    p.addListener("paused",()=>{o.paused=true;o.stopPoll();o.emit("pause")});
-    p.addListener("error",()=>{o.paused=true;o.stopPoll();o.emit("pause");o.emit("error")})}
+    p.addListener("state",e=>{const on=!!(e&&e.playing);o.setPlaying(on);o.emit(on?"play":"pause")});
+    p.addListener("track",e=>{if(e&&e.index!=null){qi=e.index;const s=songById(QUEUE[qi]);if(s)CUR=s}o._t=0;o.duration=((e&&e.duration)||0)/1000;upd();tick()});
+    p.addListener("closed",()=>{o.setPlaying(false);CUR=null;QUEUE=[];qi=-1;upd()});
+    p.addListener("error",()=>{toast("A song could not be played.")})}
   return o}
+const numId=id=>Number(String(id).slice(1));
+function nativePlay(){const p=plug();CUR=songById(QUEUE[qi]);if(!p||!CUR)return;
+  const info=QUEUE.map(songById);
+  p.playQueue({ids:QUEUE.map(numId),titles:info.map(x=>x?dn(x):""),artists:info.map(x=>x?x.artist:""),index:qi,shuffle:SHUF,repeat:REP}).catch(()=>toast("Can’t play this file"));
+  AUD.setPlaying(true);AUD._t=0;AUD.duration=0;upd()}
+function setModes(){P.shuf=SHUF;P.rep=REP;save();const p=NATIVE&&plug();if(p&&p.setModes)p.setModes({shuffle:SHUF,repeat:REP}).catch(()=>{})}
+function restore(){const p=plug();if(!p||!p.getState||CUR)return;
+  p.getState().then(r=>{if(!r||!r.active)return;QUEUE=(r.ids||[]).map(i=>"n"+i);qi=r.index||0;CUR=songById(QUEUE[qi]);if(!CUR)return;SHUF=!!r.shuffle;REP=r.repeat||0;AUD._t=(r.position||0)/1000;AUD.duration=(r.duration||0)/1000;AUD.setPlaying(!!r.playing);upd()}).catch(()=>{})}
 const songById=id=>SONGS.find(x=>x.id==id)||null;
 const srcOf=x=>x.url||(NATIVE?String(x.id).slice(1):Capacitor.convertFileSrc(x.path));
-function lk(on){const p=NATIVE&&plug();if(p){try{(on?p.lock():p.unlock()).catch(()=>{})}catch(e){}}}
-function playId(id,list){QUEUE=list&&list.length?list.slice():[id];qi=QUEUE.indexOf(id);if(qi<0){QUEUE=[id];qi=0}start()}
+function lk(on){}
+function playId(id,list){QUEUE=list&&list.length?list.slice():[id];qi=QUEUE.indexOf(id);if(qi<0){QUEUE=[id];qi=0}if(NATIVE){nativePlay();return}start()}
 function start(){CUR=songById(QUEUE[qi]);if(!CUR)return;AUD.src=srcOf(CUR);const pr=AUD.play();if(pr&&pr.catch)pr.catch(()=>toast("Can’t play this file"));media();upd()}
-function nextSong(auto){if(!QUEUE.length)return;if(REP==2&&auto){AUD.currentTime=0;AUD.play();return}
+function nextSong(auto){if(NATIVE){const p=plug();if(p)p.nextTrack().catch(()=>{});return}if(!QUEUE.length)return;if(REP==2&&auto){AUD.currentTime=0;AUD.play();return}
   if(SHUF&&QUEUE.length>1){let n;do{n=Math.floor(Math.random()*QUEUE.length)}while(n==qi);qi=n}
   else{qi++;if(qi>=QUEUE.length){if(REP==1||!auto)qi=0;else{AUD.pause();qi=QUEUE.length-1;upd();return}}}
   start()}
-function prev(){if(!QUEUE.length)return;if(AUD.currentTime>3){AUD.currentTime=0;return}qi=qi>0?qi-1:QUEUE.length-1;start()}
+function prev(){if(NATIVE){const p=plug();if(p)p.prevTrack().catch(()=>{});return}if(!QUEUE.length)return;if(AUD.currentTime>3){AUD.currentTime=0;return}qi=qi>0?qi-1:QUEUE.length-1;start()}
 function toggle(){if(!CUR)return;if(AUD.paused)AUD.play();else AUD.pause()}
 function media(){if("mediaSession"in navigator){try{navigator.mediaSession.metadata=new MediaMetadata({title:dn(CUR),artist:CUR.artist||"ElectroMusic"});const h=(a,f)=>navigator.mediaSession.setActionHandler(a,f);h("play",toggle);h("pause",toggle);h("nexttrack",()=>nextSong(false));h("previoustrack",prev)}catch(e){}}}
 function tick(){const k=$("pk");if(k&&!SEEK){k.max=AUD.duration||0;k.value=AUD.currentTime}const t=$("pt");if(t)t.textContent=fmt(AUD.currentTime);const d=$("pd");if(d)d.textContent=fmt(AUD.duration)}
@@ -161,7 +166,7 @@ function upd(){
   else{m.style.display="flex";document.body.classList.add("hasmp");
     m.innerHTML=`<img src="${LOGO}" alt=""><div class="g" onclick="openNs()" style="cursor:pointer"><div class="t">${esc(dn(CUR))}</div><div class="mut">${esc(CUR.artist||"")}</div></div><button class="ic" onclick="prev()" aria-label="Previous">${ICON.prev}</button><span class="sm"><button class="pp" onclick="toggle()" aria-label="Play or pause">${AUD.paused?ICON.play:ICON.pause}</button></span><button class="ic" onclick="nextSong(false)" aria-label="Next">${ICON.next}</button>`}
   if($("ns").style.display=="flex")$("ns").innerHTML=nsHtml()}
-function nsHtml(){return CUR?`<div class="nsi"><div class="row sp"><button class="ic" onclick="hideNs()" aria-label="Close">${ICON.down}</button><div class="mut">Now playing</div><button class="ic" onclick="songMenu('${CUR.id}')" aria-label="More options">${ICON.more}</button></div><img class="cover" src="${LOGO}" alt=""><div class="t big2">${esc(dn(CUR))}</div><div class="mut">${esc(CUR.artist||"")}</div><input id="pk" type="range" min="0" max="${AUD.duration||0}" step="1" value="${AUD.currentTime}" oninput="SEEK=1;AUD.currentTime=this.value" onchange="SEEK=0"><div class="row sp"><span class="mut" id="pt">${fmt(AUD.currentTime)}</span><span class="mut" id="pd">${fmt(AUD.duration)}</span></div><div class="row sp ctl" style="margin-top:8px"><button class="ic${SHUF?" on":""}" onclick="SHUF=!SHUF;upd()" aria-label="Shuffle">${ICON.shuffle}</button><button class="ic" onclick="prev()" aria-label="Previous">${ICON.prev}</button><button class="pp" onclick="toggle()" aria-label="Play or pause">${AUD.paused?ICON.play:ICON.pause}</button><button class="ic" onclick="nextSong(false)" aria-label="Next">${ICON.next}</button><button class="ic${REP?" on":""}" onclick="REP=(REP+1)%3;upd()" aria-label="Repeat">${REP==2?ICON.repeat1:ICON.repeat}</button></div></div>`:""}
+function nsHtml(){return CUR?`<div class="nsi"><div class="row sp"><button class="ic" onclick="hideNs()" aria-label="Close">${ICON.down}</button><div class="mut">Now playing</div><button class="ic" onclick="songMenu('${CUR.id}')" aria-label="More options">${ICON.more}</button></div><img class="cover" src="${LOGO}" alt=""><div class="t big2">${esc(dn(CUR))}</div><div class="mut">${esc(CUR.artist||"")}</div><input id="pk" type="range" min="0" max="${AUD.duration||0}" step="1" value="${AUD.currentTime}" oninput="SEEK=1;AUD.currentTime=this.value" onchange="SEEK=0"><div class="row sp"><span class="mut" id="pt">${fmt(AUD.currentTime)}</span><span class="mut" id="pd">${fmt(AUD.duration)}</span></div><div class="row sp ctl" style="margin-top:8px"><button class="ic${SHUF?" on":""}" onclick="SHUF=!SHUF;setModes();upd()" aria-label="Shuffle">${ICON.shuffle}</button><button class="ic" onclick="prev()" aria-label="Previous">${ICON.prev}</button><button class="pp" onclick="toggle()" aria-label="Play or pause">${AUD.paused?ICON.play:ICON.pause}</button><button class="ic" onclick="nextSong(false)" aria-label="Next">${ICON.next}</button><button class="ic${REP?" on":""}" onclick="REP=(REP+1)%3;setModes();upd()" aria-label="Repeat">${REP==2?ICON.repeat1:ICON.repeat}</button></div><div class="cp">©2026 Derick Malelo and The ElectroCat company ltd.</div></div>`:""}
 function openNs(){if(!CUR)return;$("ns").style.display="flex";$("ns").innerHTML=nsHtml()}
 function hideNs(){$("ns").style.display="none"}
 
@@ -189,7 +194,8 @@ function doRename(id,reset){const x=songById(id);const v=reset?"":$("rn").value.
 
 /* ---- header menu, sort, select ---- */
 const SORTS={name:["Name (A to Z)",(a,b)=>dn(a).localeCompare(dn(b))],nameD:["Name (Z to A)",(a,b)=>dn(b).localeCompare(dn(a))],artist:["Artist",(a,b)=>(a.artist||"~").localeCompare(b.artist||"~")||dn(a).localeCompare(dn(b))],new:["Newest first",(a,b)=>(b.added||0)-(a.added||0)],old:["Oldest first",(a,b)=>(a.added||0)-(b.added||0)],long:["Longest first",(a,b)=>b.dur-a.dur],short:["Shortest first",(a,b)=>a.dur-b.dur]};
-function hdMenu(){showMd(`${NATIVE?mi(ICON.refresh,"Refresh music list","closeMd();scan()"):""}${mi(ICON.sel,"Select",`selOn()`)}${mi(ICON.sort,"Sort by","sortUI()")}`)}
+function hdMenu(){showMd(`${NATIVE?mi(ICON.refresh,"Refresh music list","closeMd();scan()"):""}${mi(ICON.sel,"Select",`selOn()`)}${mi(ICON.sort,"Sort by","sortUI()")}${mi(ICON.info,"About","aboutUI()")}`)}
+function aboutUI(){showMd(`<div style="text-align:center"><img src="${LOGO}" alt="" style="width:110px;height:110px;border-radius:50%"><h2 style="margin:8px 0 2px">ElectroMusic</h2><div class="mut">Version 1.0</div></div><p style="margin:14px 0 6px">ElectroMusic is a simple music player that finds all the music on your phone by itself and plays it.</p><div class="kv"><b>Developer</b><span>Derick Malelo</span></div><div class="kv"><b>Company</b><span>The ElectroCat company ltd</span></div><div class="kv"><b>Features</b><span>Finds your songs automatically, playlists, search, sort, select, share, song info and rename, and keeps playing in the notification and on the lock screen.</span></div><div class="kv"><b>Privacy</b><span>Your music and playlists stay on your phone. Nothing is uploaded.</span></div><p class="mut" style="text-align:center;margin:14px 0 10px">©2026 Derick Malelo and The ElectroCat company ltd.<br>All rights reserved.</p><button class="s" style="width:100%" onclick="closeMd()">Close</button>`)}
 function sortUI(){showMd(`<h2>Sort by</h2>${Object.keys(SORTS).map(k=>mi(P.sort==k?ICON.check:"",SORTS[k][0],`setSort('${k}')`,P.sort==k?"sel":"")).join("")}`)}
 function setSort(k){P.sort=k;save();closeMd();render()}
 function selOn(){closeMd();TAB="songs";OPL=null;SELM=true;SEL=[];render()}
