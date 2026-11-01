@@ -62,7 +62,7 @@ function toast(t){const e=document.createElement("div");e.className="toast";e.te
 let LAY=[],HB=0;
 function push(n){LAY.push(n);try{history.pushState({n},"")}catch(e){}}
 function pop(n,ui){const i=LAY.lastIndexOf(n);if(i<0)return;LAY.splice(i,1);if(ui){HB++;try{history.back()}catch(e){HB--}}}
-function doClose(n){if(n=="sheet")hideNs();else if(n=="modal")hideMd();else if(n=="pl"){OPL=null;render()}}
+function doClose(n){if(n=="sheet")hideNs();else if(n=="modal")hideMd();else if(n=="pl"){OPL=null;render()}else if(n=="tab"){TAB="songs";render()}}
 window.addEventListener("popstate",()=>{if(HB){HB--;return}const n=LAY.pop();if(n)doClose(n)});
 
 /* ---- finding music ---- */
@@ -141,13 +141,13 @@ function vPls(){
   const p=OPL&&plOf(OPL);
   if(p){const l=plSongs(p);return`<div class="row"><button class="ic" onclick="closePl()" aria-label="Back">‹</button><h2 class="g">${esc(p.name)}</h2></div><div class="row btns"><button onclick="playPl('${p.id}')">Play all</button><button class="s" onclick="playPl('${p.id}',0,1)">Shuffle</button><button class="s" onclick="addUI('${p.id}')">Add songs</button><button class="s" onclick="delPl('${p.id}')">Delete</button></div>`+(l.length?l.map(x=>songRow(x,`playPl('${p.id}','${x.id}')`,false,`<button class="ic" onclick="rmFrom('${p.id}','${x.id}')" aria-label="Remove">✕</button>`)).join(""):'<p class="mut pad">This playlist is empty. Tap Add songs.</p>')}
   return`<div class="card"><input id="pn" placeholder="New playlist name"><button style="width:100%" onclick="newPl()">Create playlist</button></div>`+(P.pls.length?P.pls.map(q=>`<div class="sg"><div class="g" onclick="openPl('${q.id}')"><div class="t">${esc(q.name)}</div><div class="mut">${plSongs(q).length} songs</div></div><button class="s" onclick="playPl('${q.id}')">Play</button></div>`).join(""):'<p class="mut pad">No playlists yet. Create one above.</p>')}
-function setTab(t){if(OPL){OPL=null;pop("pl",true)}TAB=t;render()}
+function setTab(t){if(t==TAB)return;if(OPL){OPL=null;pop("pl",true)}if(t=="pls")push("tab");else pop("tab",true);TAB=t;render()}
 function render(){
   const y=scrollY;
   $("app").innerHTML=`<div class="hd"><div class="g"><h1>ElectroMusic</h1><div class="mut">${ST=="ok"?SONGS.length+" songs":""}</div></div>${NATIVE?'<button class="ic" onclick="scan()" aria-label="Refresh music list">⟳</button>':""}</div><div class="tabs"><button class="${TAB=="songs"?"on":""}" onclick="setTab(\'songs\')">Songs</button><button class="${TAB=="pls"?"on":""}" onclick="setTab(\'pls\')">Playlists</button></div>${TAB=="songs"?vSongs():vPls()}`;
   scrollTo(0,y);upd()}
 try{history.replaceState({n:"root"},"")}catch(e){}
-render();if(NATIVE)scan();
+render();if(NATIVE){scan();try{const bp=plug();if(bp&&bp.backGuard)bp.backGuard().catch(()=>{})}catch(e){}}
 </script>
 </body>
 </html>

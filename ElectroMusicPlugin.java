@@ -6,6 +6,10 @@ import android.database.Cursor;
 import android.os.Build;
 import android.os.PowerManager;
 import android.provider.MediaStore;
+import android.webkit.WebView;
+import android.widget.Toast;
+
+import androidx.activity.OnBackPressedCallback;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -27,6 +31,8 @@ import com.getcapacitor.annotation.PermissionCallback;
 public class ElectroMusicPlugin extends Plugin {
 
     private PowerManager.WakeLock wakeLock;
+    private boolean guarded = false;
+    private long lastBack = 0;
 
     private String permAlias() {
         return Build.VERSION.SDK_INT >= 33 ? "audio" : "storage";
@@ -48,6 +54,36 @@ public class ElectroMusicPlugin extends Plugin {
         } else {
             call.reject("denied");
         }
+    }
+
+    @PluginMethod
+    public void backGuard(final PluginCall call) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (!guarded) {
+                    guarded = true;
+                    getActivity().getOnBackPressedDispatcher().addCallback(getActivity(), new OnBackPressedCallback(true) {
+                        @Override
+                        public void handleOnBackPressed() {
+                            WebView wv = getBridge().getWebView();
+                            if (wv != null && wv.canGoBack()) {
+                                wv.goBack();
+                                return;
+                            }
+                            long now = System.currentTimeMillis();
+                            if (now - lastBack < 2000) {
+                                getActivity().finish();
+                            } else {
+                                lastBack = now;
+                                Toast.makeText(getContext(), "Press back again to exit", Toast.LENGTH_SHORT).show();
+                            }
+                        }
+                    });
+                }
+                call.resolve();
+            }
+        });
     }
 
     @PluginMethod
